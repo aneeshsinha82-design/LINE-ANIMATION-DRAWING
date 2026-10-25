@@ -35,12 +35,13 @@ small{opacity:.7}
 </div>
 </aside>
 <main><canvas id="cv" width="1280" height="720"></canvas>
-<div class="bar"><button class="p" id="play">▶ Play</button><input type="range" id="seek" min="0" max="1000" value="0"><button id="exp">Export video (.webm)</button></div>
+<div class="bar"><button class="p" id="play">▶ Play</button><input type="range" id="seek" min="0" max="1000" value="0"><select id="res"><option value="1">720p</option><option value="1.5" selected>1080p HD</option><option value="3">4K</option></select><button class="p" id="exp">Export MP4</button></div>
 <p><small>Drawings animate in the order they are listed. Everything runs in your browser; nothing is uploaded anywhere.</small></p></main>
+<script src="https://cdn.jsdelivr.net/npm/mp4-muxer@5.1.3/build/mp4-muxer.js"></script>
 <script>
 const W=1280,H=720,$=id=>document.getElementById(id),cv=$('cv'),g=cv.getContext('2d');
 const PAL=['#b3302b','#dcd8cb','#e3a23c','#4f7a6b','#c96f8b'],FT='"Sue Ellen Francisco","Reenie Beanie",cursive',FB='"Reenie Beanie","Sue Ellen Francisco",cursive';
-let items=[],scene=[],total=0,t=0,playing=false,last=0,rec=null,bgc=null;
+let SC=1,items=[],scene=[],total=0,t=0,playing=false,last=0,rec=null,bgc=null;
 const cl=(v,a=0,b=1)=>Math.min(b,Math.max(a,v)),ease=p=>p*p*(3-2*p),back=p=>1+2.7*Math.pow(p-1,3)+1.7*Math.pow(p-1,2);
 const rng=s=>()=>{s|=0;s=s+0x6D2B79F5|0;let x=Math.imul(s^s>>>15,1|s);x=x+Math.imul(x^x>>>7,61|x)^x;return((x^x>>>14)>>>0)/4294967296};
 
@@ -102,7 +103,7 @@ function wrap(txt,mw){const o=[];let l='';for(const w of txt.split(/\s+/)){const
 function camAt(t){let cam={x:0,y:0};if(!scene.length)return cam;let k=0;scene.forEach((s,i)=>{if(t>=s.ts)k=i});const s=scene[k];
 if(k==0){const p=ease(cl((t-s.ts)/s.dc));return{x:s.cam.x-300+300*p,y:s.cam.y+260-260*p}}
 const a=scene[k-1].cam,p=ease(cl((t-s.ts-.1)/(s.dc-.1)));return{x:a.x+(s.cam.x-a.x)*p,y:a.y+(s.cam.y-a.y)*p}}
-function render(t){g.clearRect(0,0,W,H);if(!bgc)paper();const cam=camAt(t),ox=((-cam.x*.25)%W+W)%W-W,oy=((-cam.y*.25)%H+H)%H-H;
+function render(t){g.setTransform(SC,0,0,SC,0,0);g.clearRect(0,0,W,H);if(!bgc)paper();const cam=camAt(t),ox=((-cam.x*.25)%W+W)%W-W,oy=((-cam.y*.25)%H+H)%H-H;
 for(let a=0;a<3;a++)for(let b=0;b<3;b++)g.drawImage(bgc,ox+a*W,oy+b*H);
 if(!scene.length){g.fillStyle='rgba(30,25,10,.7)';g.font='40px '+FT;g.textAlign='center';g.fillText('Upload your drawings to begin',W/2,H/2);return}
 g.save();g.translate(W/2-cam.x,H/2-cam.y);
@@ -134,9 +135,20 @@ $('thr').onchange=()=>{items.forEach(it=>Object.assign(it,vec(it.img,+$('thr').v
 $('seek').oninput=e=>{t=e.target.value/100;render(t)};
 $('play').onclick=()=>{if(t>=total)t=0;playing=!playing;last=performance.now();$('play').textContent=playing?'❚❚ Pause':'▶ Play';if(playing)requestAnimationFrame(tick)};
 function tick(n){if(!playing)return;t+=(n-last)/1000;last=n;if(t>=total){t=total;playing=false;$('play').textContent='▶ Play';if(rec){rec.stop();rec=null}}$('seek').value=Math.round(t*100);render(t);if(playing)requestAnimationFrame(tick)}
-$('exp').onclick=()=>{if(!scene.length||!window.MediaRecorder)return alert('Add a drawing first (and use Chrome/Edge/Firefox).');const ch=[],mt=MediaRecorder.isTypeSupported('video/webm;codecs=vp9')?'video/webm;codecs=vp9':'video/webm';
-rec=new MediaRecorder(cv.captureStream(30),{mimeType:mt,videoBitsPerSecond:8e6});rec.ondataavailable=e=>ch.push(e.data);
-rec.onstop=()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(ch,{type:'video/webm'}));a.download='line-animation.webm';a.click()};
-rec.start();t=0;playing=true;last=performance.now();$('play').textContent='❚❚ Pause';requestAnimationFrame(tick)};
+const setRes=k=>{SC=k;cv.width=Math.round(W*k/2)*2;cv.height=Math.round(H*k/2)*2};
+async function exportMP4(){const k=+$('res').value,fps=30,n=Math.ceil(total*fps),btn=$('exp');playing=false;
+setRes(k);const w=cv.width,h=cv.height,cfg={codec:h>1500?'avc1.640034':'avc1.640033',width:w,height:h,bitrate:Math.round(w*h*fps*.15),framerate:fps};
+if(!(window.VideoEncoder&&window.Mp4Muxer&&(await VideoEncoder.isConfigSupported(cfg)).supported)){setRes(1);render(t);return exportWebm(k)}
+const mux=new Mp4Muxer.Muxer({target:new Mp4Muxer.ArrayBufferTarget(),video:{codec:'avc',width:w,height:h},fastStart:'in-memory'});
+const enc=new VideoEncoder({output:(c,m)=>mux.addVideoChunk(c,m),error:e=>alert('Encoder error: '+e.message)});enc.configure(cfg);
+for(let i=0;i<n;i++){render(i/fps);const f=new VideoFrame(cv,{timestamp:Math.round(i*1e6/fps),duration:Math.round(1e6/fps)});enc.encode(f,{keyFrame:i%60==0});f.close();
+btn.textContent='Rendering '+Math.round(i/n*100)+'%';while(enc.encodeQueueSize>8)await new Promise(r=>setTimeout(r,5))}
+await enc.flush();mux.finalize();const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([mux.target.buffer],{type:'video/mp4'}));a.download='line-animation-'+h+'p.mp4';a.click();
+btn.textContent='Export MP4';setRes(1);render(t)}
+function exportWebm(k){alert('Your browser cannot encode MP4 here, so a .webm file will be saved instead. Chrome, Edge or Safari give MP4.');const ch=[];setRes(k);
+rec=new MediaRecorder(cv.captureStream(30),{mimeType:'video/webm',videoBitsPerSecond:16e6});rec.ondataavailable=e=>ch.push(e.data);
+rec.onstop=()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(ch,{type:'video/webm'}));a.download='line-animation.webm';a.click();setRes(1);render(t)};
+rec.start();t=0;playing=true;last=performance.now();requestAnimationFrame(tick)}
+$('exp').onclick=()=>{if(!scene.length)return alert('Add a drawing first.');exportMP4()};
 document.fonts.load('30px "Sue Ellen Francisco"');document.fonts.load('24px "Reenie Beanie"');document.fonts.ready.then(()=>render(t));render(0);
 </script></body></html>
