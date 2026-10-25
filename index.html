@@ -1,25 +1,142 @@
 <!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Line Animation Drawing</title>
-  <style>
-    * { box-sizing: border-box; }
-    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #0b0b0f; color: #f5f5f5; font: 16px/1.5 system-ui, sans-serif; }
-    main { width: min(92vw, 760px); text-align: center; padding: 3rem 1.5rem; }
-    h1 { font-size: clamp(2rem, 7vw, 4rem); margin: 0 0 1rem; letter-spacing: -.04em; }
-    p { color: #b8b8c4; margin: 0 auto; max-width: 38rem; }
-    .line { width: min(360px, 75vw); height: 3px; background: linear-gradient(90deg, transparent, #f5f5f5, transparent); margin: 2rem auto; animation: draw 2.5s ease-in-out infinite alternate; transform-origin: center; }
-    @keyframes draw { from { transform: scaleX(.08); opacity: .45; } to { transform: scaleX(1); opacity: 1; } }
-    @media (prefers-reduced-motion: reduce) { .line { animation: none; } }
-  </style>
-</head>
-<body>
-  <main>
-    <h1>Line Animation Drawing</h1>
-    <div class="line" aria-hidden="true"></div>
-    <p>A minimal home page for the LINE-ANIMATION-DRAWING project.</p>
-  </main>
-</body>
-</html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Line Drawing Animator</title>
+<link href="https://fonts.googleapis.com/css2?family=Sue+Ellen+Francisco&family=Reenie+Beanie&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#f4f1ea;--fg:#1d1a14;--card:#fff;--line:#d9d3c4;--ac:#8f8765;color-scheme:light}
+@media(prefers-color-scheme:dark){:root{--bg:#1b1a16;--fg:#ece8dc;--card:#26241e;--line:#3a372d;color-scheme:dark}}
+*{box-sizing:border-box}body{margin:0;display:flex;min-height:100vh;font:14px system-ui,sans-serif;background:var(--bg);color:var(--fg)}
+aside{width:340px;padding:16px;border-right:1px solid var(--line);overflow:auto;max-height:100vh}
+main{flex:1;padding:16px;min-width:0}h1{font-size:18px;margin:0 0 12px}
+.drop{display:block;border:2px dashed var(--line);border-radius:10px;padding:18px;text-align:center;cursor:pointer;margin-bottom:12px}
+.drop.on{border-color:var(--ac)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:10px;display:grid;grid-template-columns:64px 1fr;gap:8px}
+.card img{width:64px;height:64px;object-fit:contain;background:#fff;border-radius:6px}
+.card input,.card textarea,.card select{width:100%;margin:0 0 4px;font:inherit;background:transparent;color:inherit;border:1px solid var(--line);border-radius:6px;padding:4px}
+.card .row{display:flex;gap:4px;align-items:center}.card input[type=color]{width:40px;padding:0;height:26px}
+.g{margin:12px 0}.g label{display:flex;justify-content:space-between;align-items:center;margin:6px 0;gap:8px}.g input[type=text]{width:150px}
+button{font:inherit;padding:7px 12px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:inherit;cursor:pointer}
+button.p{background:var(--ac);color:#fff;border-color:var(--ac)}
+canvas{width:100%;max-width:1100px;aspect-ratio:16/9;border-radius:10px;background:#8f8765;display:block}
+.bar{display:flex;gap:8px;align-items:center;margin-top:10px;max-width:1100px}.bar input{flex:1}
+small{opacity:.7}
+@media(max-width:800px){body{flex-direction:column}aside{width:100%;max-height:none}}
+</style></head><body>
+<aside>
+<h1>Line Drawing Animator</h1>
+<label class="drop" id="drop"><input type="file" id="files" multiple accept="image/*" hidden>Click or drop your line drawings here<br><small>Dark lines on a light background (PNG / JPG)</small></label>
+<div id="cards"></div>
+<div class="g">
+<label>Intro text on first line <input type="text" id="intro" value="LINE ANIMATION"></label>
+<label>Drawing time (s) <input type="range" id="speed" min="1" max="8" step=".2" value="2.8"></label>
+<label>Line detection <input type="range" id="thr" min="60" max="230" value="150"></label>
+<label>Line color <input type="color" id="ink" value="#15110b"></label>
+<label>Paper color <input type="color" id="paper" value="#8f8765"></label>
+</div>
+</aside>
+<main><canvas id="cv" width="1280" height="720"></canvas>
+<div class="bar"><button class="p" id="play">▶ Play</button><input type="range" id="seek" min="0" max="1000" value="0"><button id="exp">Export video (.webm)</button></div>
+<p><small>Drawings animate in the order they are listed. Everything runs in your browser; nothing is uploaded anywhere.</small></p></main>
+<script>
+const W=1280,H=720,$=id=>document.getElementById(id),cv=$('cv'),g=cv.getContext('2d');
+const PAL=['#b3302b','#dcd8cb','#e3a23c','#4f7a6b','#c96f8b'],FT='"Sue Ellen Francisco","Reenie Beanie",cursive',FB='"Reenie Beanie","Sue Ellen Francisco",cursive';
+let items=[],scene=[],total=0,t=0,playing=false,last=0,rec=null,bgc=null;
+const cl=(v,a=0,b=1)=>Math.min(b,Math.max(a,v)),ease=p=>p*p*(3-2*p),back=p=>1+2.7*Math.pow(p-1,3)+1.7*Math.pow(p-1,2);
+const rng=s=>()=>{s|=0;s=s+0x6D2B79F5|0;let x=Math.imul(s^s>>>15,1|s);x=x+Math.imul(x^x>>>7,61|x)^x;return((x^x>>>14)>>>0)/4294967296};
+
+/* ---------- vectorise: threshold -> thin to 1px skeleton -> trace into pen strokes ---------- */
+function thin(m,w,h){let ch=1;const d=[];while(ch){ch=0;for(let s=0;s<2;s++){d.length=0;
+for(let y=1;y<h-1;y++)for(let x=1;x<w-1;x++){const i=y*w+x;if(!m[i])continue;
+const a=m[i-w],b=m[i-w+1],c=m[i+1],e=m[i+w+1],f=m[i+w],k=m[i+w-1],l=m[i-1],n=m[i-w-1],B=a+b+c+e+f+k+l+n;if(B<2||B>6)continue;
+if((!a&&b)+(!b&&c)+(!c&&e)+(!e&&f)+(!f&&k)+(!k&&l)+(!l&&n)+(!n&&a)!==1)continue;
+if(s?(a*c*l||a*f*l):(a*c*f||c*f*l))continue;d.push(i)}
+for(const i of d)m[i]=0;if(d.length)ch=1}}}
+function vec(img,thr){
+const sc=Math.min(1,340/Math.max(img.width,img.height)),w=Math.round(img.width*sc)+8,h=Math.round(img.height*sc)+8;
+const c=document.createElement('canvas');c.width=w;c.height=h;const q=c.getContext('2d',{willReadFrequently:true});
+q.fillStyle='#fff';q.fillRect(0,0,w,h);q.drawImage(img,4,4,w-8,h-8);const D=q.getImageData(0,0,w,h).data,m=new Uint8Array(w*h);let n=0;
+for(let i=0;i<w*h;i++)if(.3*D[4*i]+.59*D[4*i+1]+.11*D[4*i+2]<thr){m[i]=1;n++}
+if(n>w*h*.5){for(let i=0;i<m.length;i++)m[i]^=1;n=w*h-n}
+thin(m,w,h);let sk=0;const px=[];for(let i=0;i<w*h;i++)if(m[i]){sk++;px.push(i)}
+const thick=sk?n/sk:3,vis=new Uint8Array(w*h),nb=i=>{const x=i%w,y=i/w|0,r=[];for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){if(!dx&&!dy)continue;const j=(y+dy)*w+x+dx;if(m[j]&&x+dx>=0&&x+dx<w)r.push(j)}return r};
+const strokes=[];let cx=w/2,cy=0,left=px.length;
+while(left>0){let best=-1,bs=1e9;for(const i of px){if(vis[i])continue;const dx=i%w-cx,dy=(i/w|0)-cy,s=Math.hypot(dx,dy)+(nb(i).length<=1?0:30);if(s<bs){bs=s;best=i}}
+let cur=best,s=[],pd=null;while(cur>=0){vis[cur]=1;left--;s.push([cur%w,cur/w|0]);const o=nb(cur).filter(j=>!vis[j]);if(!o.length)break;
+let nx=o[0],bd=-9;for(const j of o){const dx=j%w-cur%w,dy=(j/w|0)-(cur/w|0),dd=pd?(dx*pd[0]+dy*pd[1])/Math.hypot(dx,dy)/Math.hypot(...pd):0-Math.hypot(dx,dy)*.01;if(dd>bd){bd=dd;nx=j}}
+pd=[nx%w-cur%w,(nx/w|0)-(cur/w|0)];cur=nx}
+if(s.length>5){const sm=s.map((p,i)=>{let a=0,b=0,k=0;for(let j=-2;j<=2;j++){const r=s[i+j];if(r){a+=r[0];b+=r[1];k++}}return[a/k,b/k]});strokes.push(sm.filter((_,i)=>i%2==0||i==sm.length-1));}
+const L=s[s.length-1];cx=L[0];cy=L[1]}
+return{strokes,w,h,thick}}
+
+/* ---------- scene ---------- */
+const len=s=>{let L=0;for(let i=1;i<s.length;i++)L+=Math.hypot(s[i][0]-s[i-1][0],s[i][1]-s[i-1][1]);return L};
+function bez(a,b,c,d,n=70){const r=[];for(let i=0;i<=n;i++){const u=i/n,v=1-u;r.push([v*v*v*a[0]+3*v*v*u*b[0]+3*v*u*u*c[0]+u*u*u*d[0],v*v*v*a[1]+3*v*v*u*b[1]+3*v*u*u*c[1]+u*u*u*d[1]])}return r}
+function blob(color,x,y,w,h,seed){const R=rng(seed),c=document.createElement('canvas'),P=30;c.width=w+2*P;c.height=h+2*P;const q=c.getContext('2d');
+q.fillStyle=color;q.beginPath();const N=44,ph=[R()*6,R()*6,R()*6];for(let i=0;i<=N;i++){const a=i/N*6.283,r=1+.05*Math.sin(3*a+ph[0])+.04*Math.sin(5*a+ph[1])+(R()-.5)*.05;
+const px=c.width/2+Math.cos(a)*w/2*r,py=c.height/2+Math.sin(a)*h/2*r;i?q.lineTo(px,py):q.moveTo(px,py)}q.fill();
+q.globalCompositeOperation='destination-out';for(let i=0;i<260;i++){const a=R()*6.283,rr=.55+R()*.5;q.globalAlpha=.25+R()*.6;q.beginPath();q.arc(c.width/2+Math.cos(a)*w/2*rr,c.height/2+Math.sin(a)*h/2*rr,R()*R()*5+.5,0,6.283);q.fill()}
+return c}
+function build(){scene=[];let T=.2,prev=null,ink=$('ink').value;
+items.forEach((it,i)=>{const sc=Math.min(440/it.w,440/it.h),c={x:i%2?60:-40,y:i*H},side=it.side;
+const S=it.strokes.map(s=>s.map(p=>[c.x+(p[0]-it.w/2)*sc,c.y+(p[1]-it.h/2)*sc]));
+const first=S.length?S[0][0]:[c.x,c.y],start=prev||[c.x-820,c.y+560];
+const con=i?bez(start,[start[0],start[1]+460],[first[0]-140,first[1]-440],first):bez(start,[start[0]+380,start[1]-230],[first[0]-420,first[1]+300],first);
+let x0=1e9,x1=-1e9,y0=1e9,y1=-1e9;S.forEach(s=>s.forEach(p=>{x0=Math.min(x0,p[0]);x1=Math.max(x1,p[0]);y0=Math.min(y0,p[1]);y1=Math.max(y1,p[1])}));
+if(!S.length){x0=c.x-100;x1=c.x+100;y0=c.y-100;y1=c.y+100}
+const bw=(x1-x0)*.85+40,bh=(y1-y0)*.8+40,dc=i?1.5:2.1,dd=+$('speed').value,sl=S.map(len);
+const sg={i,c,S,sl,SL:sl.reduce((a,b)=>a+b,0)||1,con,conL:len(con),lw:cl(it.thick*sc,3,6),ts:T,dc,dd,hold:.6,item:it,
+blob:blob(it.color,0,0,bw,bh,i*77+5),bx:(x0+x1)/2-.06*(x1-x0),by:(y0+y1)/2-.05*(y1-y0),cam:{x:c.x+(side=='right'?190:-190),y:c.y}};
+scene.push(sg);T+=dc+dd+sg.hold;prev=S.length?S[S.length-1][S[S.length-1].length-1]:first});
+total=T+.4;$('seek').max=Math.round(total*100);render(t)}
+
+/* ---------- drawing ---------- */
+function paper(){const c=document.createElement('canvas');c.width=W;c.height=H;const q=c.getContext('2d'),R=rng(9);q.fillStyle=$('paper').value;q.fillRect(0,0,W,H);
+const id=q.getImageData(0,0,W,H),d=id.data;for(let i=0;i<d.length;i+=4){const n=(R()-.5)*22;d[i]+=n;d[i+1]+=n;d[i+2]+=n}q.putImageData(id,0,0);
+q.strokeStyle='rgba(50,40,20,.22)';q.lineCap='round';for(let k=0;k<16;k++){q.lineWidth=.6+R()*1.6;q.beginPath();let x=R()*W,y=R()*H;q.moveTo(x,y);for(let j=0;j<12;j++){x+=20+R()*50;y+=(R()-.5)*26;q.lineTo(x,y)}q.stroke()}
+const v=q.createRadialGradient(W/2,H/2,H*.3,W/2,H/2,W*.65);v.addColorStop(0,'rgba(0,0,0,0)');v.addColorStop(1,'rgba(20,15,5,.35)');q.fillStyle=v;q.fillRect(0,0,W,H);bgc=c}
+function part(ss,lens,tot,f,lw){g.lineWidth=lw;g.lineCap=g.lineJoin='round';g.strokeStyle=$('ink').value;let need=tot*f;
+for(let k=0;k<ss.length&&need>0;k++){const s=ss[k],L=lens?lens[k]:tot;g.beginPath();g.moveTo(s[0][0],s[0][1]);
+if(need>=L){for(const p of s)g.lineTo(p[0],p[1])}else{let a=0;for(let i=1;i<s.length;i++){const d=Math.hypot(s[i][0]-s[i-1][0],s[i][1]-s[i-1][1]);if(a+d>=need){const u=(need-a)/d;g.lineTo(s[i-1][0]+(s[i][0]-s[i-1][0])*u,s[i-1][1]+(s[i][1]-s[i-1][1])*u);break}g.lineTo(s[i][0],s[i][1]);a+=d}}
+g.stroke();need-=L}}
+function wrap(txt,mw){const o=[];let l='';for(const w of txt.split(/\s+/)){const x=l?l+' '+w:w;if(g.measureText(x).width>mw&&l){o.push(l);l=w}else l=x}if(l)o.push(l);return o}
+function camAt(t){let cam={x:0,y:0};if(!scene.length)return cam;let k=0;scene.forEach((s,i)=>{if(t>=s.ts)k=i});const s=scene[k];
+if(k==0){const p=ease(cl((t-s.ts)/s.dc));return{x:s.cam.x-300+300*p,y:s.cam.y+260-260*p}}
+const a=scene[k-1].cam,p=ease(cl((t-s.ts-.1)/(s.dc-.1)));return{x:a.x+(s.cam.x-a.x)*p,y:a.y+(s.cam.y-a.y)*p}}
+function render(t){g.clearRect(0,0,W,H);if(!bgc)paper();const cam=camAt(t),ox=((-cam.x*.25)%W+W)%W-W,oy=((-cam.y*.25)%H+H)%H-H;
+for(let a=0;a<3;a++)for(let b=0;b<3;b++)g.drawImage(bgc,ox+a*W,oy+b*H);
+if(!scene.length){g.fillStyle='rgba(30,25,10,.7)';g.font='40px '+FT;g.textAlign='center';g.fillText('Upload your drawings to begin',W/2,H/2);return}
+g.save();g.translate(W/2-cam.x,H/2-cam.y);
+for(const s of scene){if(t<s.ts)continue;const lt=t-s.ts,it=s.item,ink=$('ink').value;
+const tb=s.dc-.3,bp=cl((lt-tb)/.5);if(bp>0){g.save();g.globalAlpha=cl(bp*2);const k=.6+.4*back(bp);g.translate(s.bx,s.by);g.scale(k,k);g.drawImage(s.blob,-s.blob.width/2,-s.blob.height/2);g.restore()}
+const cf=ease(cl(lt/s.dc));part([s.con],null,s.conL,cf,s.lw);
+if(s.i==0&&$('intro').value){const txt=$('intro').value.toUpperCase(),C=s.con;g.save();g.font='17px '+FT;g.fillStyle='#2a2214';g.textAlign='center';let acc=0,pos=[];for(let j=0;j<C.length;j++){if(j)acc+=Math.hypot(C[j][0]-C[j-1][0],C[j][1]-C[j-1][1]);pos.push(acc)}
+const n=Math.floor(txt.length*cl((lt-.3)/(s.dc-.4)));for(let k=0;k<n;k++){const d=s.conL*.22+k*15;let j=pos.findIndex(v=>v>=d);if(j<1||pos[j]>s.conL*cf)break;const a=Math.atan2(C[j][1]-C[j-1][1],C[j][0]-C[j-1][0]);
+g.save();g.translate(C[j][0],C[j][1]);g.rotate(a);g.fillText(txt[k],0,-14);g.restore()}g.restore()}
+const df=cl((lt-s.dc)/s.dd);if(df>0)part(s.S,s.sl,s.SL,ease(df),s.lw);
+const tx=s.side=='right'?s.c.x+250:s.c.x-250,al=s.item.side=='right'?'left':'right';
+if(df>0&&(it.title||it.body)){g.save();g.fillStyle='#2a2214';g.textAlign=al;const X=it.side=='right'?s.c.x+250:s.c.x-250;let Y=s.c.y-30;
+g.font='38px '+FT;const tt=it.title.toUpperCase().slice(0,Math.ceil(it.title.length*cl(df*2.5)));if(it.title){g.fillText(tt,X,Y);Y+=34}
+g.font='24px '+FB;const lines=wrap(it.body,360),all=lines.join('\n'),n=Math.ceil(all.length*cl((df-.15)*1.3));let used=0;for(const l of lines){const part=l.slice(0,Math.max(0,n-used));used+=l.length+1;g.fillText(part,X,Y);Y+=26}g.restore()}}
+g.restore()}
+
+/* ---------- ui ---------- */
+function card(it){const d=document.createElement('div');d.className='card';
+d.innerHTML=`<img src="${it.src}"><div><input class=t placeholder="Title text" value="${it.title}"><textarea class=b rows=2 placeholder="Body text">${it.body}</textarea>
+<div class=row><input type=color class=c value="${it.color}"><select class=s><option value=right>Text right</option><option value=left>Text left</option></select><button class=x>✕</button></div></div>`;
+const u=()=>{it.title=d.querySelector('.t').value;it.body=d.querySelector('.b').value;it.color=d.querySelector('.c').value;it.side=d.querySelector('.s').value;build()};
+d.querySelectorAll('input,textarea,select').forEach(e=>e.oninput=u);d.querySelector('.s').value=it.side;
+d.querySelector('.x').onclick=()=>{items=items.filter(z=>z!==it);d.remove();build()};$('cards').append(d)}
+function add(files){[...files].forEach(f=>{const src=URL.createObjectURL(f),img=new Image();img.onload=()=>{const n=items.length,v=vec(img,+$('thr').value);
+const it={img,src,...v,title:n?'':'PENCIL SKETCHES',body:n?'':'a glimpse of the raw talents of this genius',color:PAL[n%PAL.length],side:n%2?'left':'right'};items.push(it);card(it);build()};img.src=src})}
+$('files').onchange=e=>add(e.target.files);const dr=$('drop');dr.ondragover=e=>{e.preventDefault();dr.classList.add('on')};dr.ondragleave=()=>dr.classList.remove('on');dr.ondrop=e=>{e.preventDefault();dr.classList.remove('on');add(e.dataTransfer.files)};
+$('thr').onchange=()=>{items.forEach(it=>Object.assign(it,vec(it.img,+$('thr').value)));build()};
+['speed','intro','ink'].forEach(k=>$(k).oninput=build);$('paper').oninput=()=>{bgc=null;render(t)};
+$('seek').oninput=e=>{t=e.target.value/100;render(t)};
+$('play').onclick=()=>{if(t>=total)t=0;playing=!playing;last=performance.now();$('play').textContent=playing?'❚❚ Pause':'▶ Play';if(playing)requestAnimationFrame(tick)};
+function tick(n){if(!playing)return;t+=(n-last)/1000;last=n;if(t>=total){t=total;playing=false;$('play').textContent='▶ Play';if(rec){rec.stop();rec=null}}$('seek').value=Math.round(t*100);render(t);if(playing)requestAnimationFrame(tick)}
+$('exp').onclick=()=>{if(!scene.length||!window.MediaRecorder)return alert('Add a drawing first (and use Chrome/Edge/Firefox).');const ch=[],mt=MediaRecorder.isTypeSupported('video/webm;codecs=vp9')?'video/webm;codecs=vp9':'video/webm';
+rec=new MediaRecorder(cv.captureStream(30),{mimeType:mt,videoBitsPerSecond:8e6});rec.ondataavailable=e=>ch.push(e.data);
+rec.onstop=()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(ch,{type:'video/webm'}));a.download='line-animation.webm';a.click()};
+rec.start();t=0;playing=true;last=performance.now();$('play').textContent='❚❚ Pause';requestAnimationFrame(tick)};
+document.fonts.load('30px "Sue Ellen Francisco"');document.fonts.load('24px "Reenie Beanie"');document.fonts.ready.then(()=>render(t));render(0);
+</script></body></html>
